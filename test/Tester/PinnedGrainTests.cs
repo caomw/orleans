@@ -114,55 +114,6 @@ namespace Tester
             await CountActivations("After checks");
         }
 
-        [Fact, TestCategory("BVT"), TestCategory("PinnedGrains"), TestCategory("Placement")]
-        public async Task PinnedGrain_NotExists()
-        {
-            IPartitionManager partitionManager = GrainFactory.GetGrain<IPartitionManager>(0);
-            IList<PartitionInfo> partitionInfos = await partitionManager.GetPartitionInfos();
-
-            foreach (PartitionInfo pi in partitionInfos)
-            {
-                output.WriteLine("Initial: Partiton {0} exists on silo {1}", pi.PartitionId, pi.SiloId);
-            }
-
-            Guid partitionId = Guid.NewGuid();
-            List<Guid> preCreatedPartitions = partitionInfos.Select(pi => pi.PartitionId).ToList();
-            while (preCreatedPartitions.Contains(partitionId))
-            {
-                partitionId = Guid.NewGuid();
-            }
-
-            Exception exc = await Assert.ThrowsAsync<Exception>(async () =>
-            {
-                output.WriteLine("Attempting connection to non-existent Partition {0}", partitionId);
-
-                IPartitionGrain grain = GrainFactory.GetGrain<IPartitionGrain>(partitionId);
-                PartitionInfo partInfo = await grain.GetPartitionInfo();
-
-                string error = string.Format(
-                    "Oops - Pinned grain {0} should not exist but was found on silo {1}", 
-                    partitionId, partInfo.SiloId);
-                output.WriteLine(error);
-                Assert.False(true, error);
-            });
-
-            if (exc.GetType().IsInstanceOfType(typeof(Xunit.Sdk.FalseException)))
-            {
-                output.WriteLine(
-                    "Fail: Did not get expected error talking to non-existent Partition {0}"
-                    + Environment.NewLine + "Error = {1}",
-                    partitionId, exc.Message);
-
-                throw exc;
-            }
-
-            output.WriteLine(
-                "Got expected error talking to non-existent Partition {0}"
-                + Environment.NewLine + "Error = {1}",
-                partitionId, exc);
-        }
-
-
         private async Task CountActivations(string when)
         {
             string grainType = typeof(PartitionGrain).FullName;
@@ -215,6 +166,56 @@ namespace Tester
         public virtual void Dispose()
         {
             fixture.Dispose();
+        }
+
+        [Fact, TestCategory("BVT"), TestCategory("PinnedGrains"), TestCategory("Placement")]
+        public async Task PinnedGrain_NotExists()
+        {
+            // Running this test in a cluster-per-test environment in case of error causes too many grains to be created.
+
+            IPartitionManager partitionManager = GrainFactory.GetGrain<IPartitionManager>(0);
+            IList<PartitionInfo> partitionInfos = await partitionManager.GetPartitionInfos();
+
+            foreach (PartitionInfo pi in partitionInfos)
+            {
+                output.WriteLine("Initial: Partiton {0} exists on silo {1}", pi.PartitionId, pi.SiloId);
+            }
+
+            Guid partitionId = Guid.NewGuid();
+            List<Guid> preCreatedPartitions = partitionInfos.Select(pi => pi.PartitionId).ToList();
+            while (preCreatedPartitions.Contains(partitionId))
+            {
+                partitionId = Guid.NewGuid();
+            }
+
+            Exception exc = await Assert.ThrowsAsync<Exception>(async () =>
+            {
+                output.WriteLine("Attempting connection to non-existent Partition {0}", partitionId);
+
+                IPartitionGrain grain = GrainFactory.GetGrain<IPartitionGrain>(partitionId);
+                PartitionInfo partInfo = await grain.GetPartitionInfo();
+
+                string error = string.Format(
+                    "Oops - Pinned grain {0} should not exist but was found on silo {1}",
+                    partitionId, partInfo.SiloId);
+                output.WriteLine(error);
+                Assert.False(true, error);
+            });
+
+            if (exc.GetType().IsInstanceOfType(typeof(Xunit.Sdk.FalseException)))
+            {
+                output.WriteLine(
+                    "Fail: Did not get expected error talking to non-existent Partition {0}"
+                    + Environment.NewLine + "Error = {1}",
+                    partitionId, exc.Message);
+
+                throw exc;
+            }
+
+            output.WriteLine(
+                "Got expected error talking to non-existent Partition {0}"
+                + Environment.NewLine + "Error = {1}",
+                partitionId, exc);
         }
 
         [Theory]
