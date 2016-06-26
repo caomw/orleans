@@ -199,8 +199,10 @@ namespace UnitTests.Grains
         {
             logger.Info("Creating partition grain id {0} on silo id {1}", partitionId, hostId);
             IPartitionGrain partitionGrain = GrainFactory.GetGrain<IPartitionGrain>(partitionId);
+            logger.Info("Starting partition grain id {0} on silo id {1}", partitionId, hostId);
             PartitionInfo partitionInfo = await partitionGrain.Start();
-            logger.Info("Partition grain {0} has been started on silo id {1}", partitionId, partitionInfo);
+            logger.Info("Partition grain {0} has been started on silo id {1} using partition info {2}", 
+                partitionId, hostId, partitionInfo);
         }
     }
 }
