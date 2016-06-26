@@ -188,7 +188,8 @@ namespace Tester
                 partitionId = Guid.NewGuid();
             }
 
-            Exception exc = await Assert.ThrowsAsync<Exception>(async () =>
+            // TODO: Should check for more specific expected Exception type.
+            Exception exc = await Assert.ThrowsAnyAsync<Exception>(async () =>
             {
                 output.WriteLine("Attempting connection to non-existent Partition {0}", partitionId);
 
@@ -202,7 +203,7 @@ namespace Tester
                 Assert.False(true, error);
             });
 
-            if (exc.GetType().IsInstanceOfType(typeof(Xunit.Sdk.FalseException)))
+            if (exc.GetType().FullName == typeof(Xunit.Sdk.FalseException).FullName)
             {
                 output.WriteLine(
                     "Fail: Did not get expected error talking to non-existent Partition {0}"
@@ -213,9 +214,9 @@ namespace Tester
             }
 
             output.WriteLine(
-                "Got expected error talking to non-existent Partition {0}"
-                + Environment.NewLine + "Error = {1}",
-                partitionId, exc);
+                "Got expected error {0} talking to non-existent Partition {1}"
+                + Environment.NewLine + "Error = {2}",
+                exc.GetType().FullName, partitionId, exc);
         }
 
         [Theory]
