@@ -14,6 +14,9 @@ namespace UnitTests.GrainInterfaces
         /// <summary> Start this partiton grain. </summary>
         Task<PartitionInfo> Start();
 
+        /// <summary> Stops this partiton grain. </summary>
+        Task Stop();
+
         /// <summary> Return the <c>PartitionInfo</c> for this partition. </summary>
         Task<PartitionInfo> GetPartitionInfo();
     }

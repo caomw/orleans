@@ -31,6 +31,7 @@ namespace UnitTests.Grains
         private string siloId;
         private IPartitionGrain me;
         private IPartitionManager partitionManager;
+        private bool registered;
 
         public override async Task OnActivateAsync()
         {
@@ -50,29 +51,73 @@ namespace UnitTests.Grains
                     SiloId = siloId
                 };
             }
-
-            logger.Info("Registering partition grain {0} on silo {1} with partition manager", partitionId, siloId);
-            await partitionManager.RegisterPartition(PartitionConfig, me);
-            logger.Info("Partition grain {0} has been activated on this silo", partitionId);
+            else
+            {
+                await RegisterWithPartitionManager();
+            }
         }
 
         public override async Task OnDeactivateAsync()
         {
-            logger.Info("Unregistering partition grain {0} on silo {1} with partition manager", partitionId, siloId);
-            await partitionManager.RemovePartition(PartitionConfig, me);
-            logger.Info("Partition grain {0} has been stopped on this silo", partitionId);
+            await Stop();
         }
 
-        public Task<PartitionInfo> Start()
+        public async Task<PartitionInfo> Start()
         {
-            logger.Info("Partition grain {0} has been started on this silo", partitionId);
-            return Task.FromResult(PartitionConfig);
+            await RegisterWithPartitionManager();
+
+            DelayDeactivation(TimeSpan.MaxValue); // Ensure we do not get paged out
+
+            logger.Info("Partition grain {0} is now started on silo {1}", partitionId, siloId);
+            return PartitionConfig;
+        }
+
+        public async Task Stop()
+        {
+            await UnregisterWithPartitionManager();
+
+            DeactivateOnIdle(); // Mark ourselves for deactivation
+
+            logger.Info("Partition grain {0} is now stopped on silo {1}", partitionId, siloId);
         }
 
         public Task<PartitionInfo> GetPartitionInfo()
         {
-            logger.Info("GetPartitionInfo");
+            if (logger.IsVerbose)
+            {
+                logger.Verbose("GetPartitionInfo");
+            }
             return Task.FromResult(PartitionConfig);
+        }
+
+        private async Task RegisterWithPartitionManager()
+        {
+            if (!registered)
+            {
+                logger.Info("Registering partition grain {0} on silo {1} with partition manager", partitionId, siloId);
+                await partitionManager.RegisterPartition(PartitionConfig, me);
+                registered = true;
+                logger.Info("Partition grain {0} on silo {1} has been registered with partition manager.", partitionId, siloId);
+            }
+            else if (logger.IsVerbose)
+            {
+                logger.Verbose("Partition grain {0} is already registered", partitionId);
+            }
+        }
+
+        private async Task UnregisterWithPartitionManager()
+        {
+            if (registered)
+            {
+                logger.Info("Unregistering partition grain {0} from partition manager.", partitionId);
+                await partitionManager.RemovePartition(PartitionConfig, me);
+                registered = false;
+                logger.Info("Partition grain {0} on silo {1} has been unregistered from partition manager.", partitionId, siloId);
+            }
+            else if (logger.IsVerbose)
+            {
+                logger.Verbose("Partition grain {0} is already unregistered", partitionId);
+            }
         }
     }
 
@@ -164,45 +209,67 @@ namespace UnitTests.Grains
 
         private IGrainFactory GrainFactory { get; set; }
         private Logger logger;
+        /// <summary> The provider runtime for this silo. </summary>
+        private IProviderRuntime providerRuntime;
+        /// <summary> Our partition grain for this silo. </summary>
+        private IPartitionGrain partitionGrain;
 
         /// <summary>
         /// Bootstrap the partition grain in this silo.
         /// </summary>
-        public async Task Init(string name, IProviderRuntime providerRuntime, IProviderConfiguration config)
+        public async Task Init(string name, IProviderRuntime runtime, IProviderConfiguration config)
         {
-            logger = providerRuntime.GetLogger("Startup:" + name);
-            GrainFactory = providerRuntime.GrainFactory;
+            logger = runtime.GetLogger("Startup:" + name);
+            GrainFactory = runtime.GrainFactory;
+            providerRuntime = runtime;
 
-            HostId = providerRuntime.SiloIdentity;
+            HostId = runtime.SiloIdentity;
 
             // Use different partition id value for each silo instance.
             PartitionId = Guid.NewGuid();
 
             Name = "Partition-" + PartitionId;
 
-            await StartPartition(PartitionId, HostId);
+            await CreatePartition(PartitionId, HostId);
         }
 
-        public Task Close()
+        public async Task Close()
         {
-            logger.Info("NOOP - Stopping partition grain id {0} on silo id {1}", PartitionId, HostId);
-            return TaskDone.Done;
+            await RemovePartition(PartitionId, HostId);
         }
 
         /// <summary>
-        /// Start the partition instance for this silo.
+        /// Create and start the partition instance for this silo.
         /// </summary>
         /// <param name="partitionId">Id value for this partition.</param>
         /// <param name="hostId">Id value for this host.</param>
-        /// <returns>Async Task to indicate when the partition startup operation is complete.</returns>
-        private async Task StartPartition(Guid partitionId, string hostId)
+        /// <returns>Returns <c>true</c> if the partition grain instance on this silo was created successfully.</returns>
+        private async Task<bool> CreatePartition(Guid partitionId, string hostId)
         {
+            Grain pinnedGrain = providerRuntime.ServiceProvider.GetService(typeof(PartitionGrain)) as Grain;
+
             logger.Info("Creating partition grain id {0} on silo id {1}", partitionId, hostId);
-            IPartitionGrain partitionGrain = GrainFactory.GetGrain<IPartitionGrain>(partitionId);
+            partitionGrain = GrainFactory.GetGrain<IPartitionGrain>(partitionId);
+            logger.Info("Partition grain {0} has been created on silo id {1}", partitionId, hostId);
+
             logger.Info("Starting partition grain id {0} on silo id {1}", partitionId, hostId);
             PartitionInfo partitionInfo = await partitionGrain.Start();
-            logger.Info("Partition grain {0} has been started on silo id {1} using partition info {2}", 
+            logger.Info("Partition grain {0} has been started on silo id {1} using partition info {2}",
                 partitionId, hostId, partitionInfo);
+            return true;
+        }
+
+        /// <summary>
+        /// Remove the partition instance for this silo.
+        /// </summary>
+        /// <param name="partitionId">Id value for this partition.</param>
+        /// <param name="hostId">Id value for this host.</param>
+        /// <returns>Grain reference to the partion grain instance that was created.</returns>
+        private async Task RemovePartition(Guid partitionId, string hostId)
+        {
+            logger.Info("Stopping partition grain id {0} on silo id {1}", PartitionId, HostId);
+            await partitionGrain.Stop();
+            logger.Info("Partition grain {0} has been stopped on silo id {1}", partitionId, hostId);
         }
     }
 }
